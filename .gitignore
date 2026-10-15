@@ -1,0 +1,33 @@
+# Images (ignore general image formats but preserve core visualizer assets)
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.ico
+*.tiff
+!scenes.png
+!blinds.png
+!difference.png
+
+# Audio files (ignore external audio but preserve bundled demo track)
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+*.aac
+!song.mp3
+
+# Markdown documentation
+*.md
+!README.md
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
