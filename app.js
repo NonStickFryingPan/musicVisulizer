@@ -6,6 +6,9 @@ window.addEventListener('DOMContentLoaded', () => {
   const audioEngine = new AudioEngine();
   const renderer = new ShaderRenderer(canvas);
 
+  window.audioEngine = audioEngine;
+  window.renderer = renderer;
+
   // Eager background preload during preloader for zero-latency instant playback
   const audioPreloadPromise = audioEngine.preloadDefaultTracks([
     { url: 'song.mp3', name: 'SINES Theme 1' },
@@ -54,8 +57,7 @@ window.addEventListener('DOMContentLoaded', () => {
       targetPct = Math.min(98.0, 80.0 + extraSec * 0.75);
     }
 
-    const isAudioReady = audioEngine.audioBuffer !== null;
-    if (renderer.isLoaded && isAudioReady) {
+    if (renderer.isLoaded) {
       currentPct += (100.0 - currentPct) * 0.20;
       if (currentPct >= 99.4) {
         currentPct = 100;
@@ -191,19 +193,26 @@ window.addEventListener('DOMContentLoaded', () => {
   if (btnPlayDefault) {
     btnPlayDefault.addEventListener('click', async () => {
       try {
-        await audioEngine.initContext();
+        await audioEngine.resumeContext();
         if (!audioEngine.audioBuffer) {
+          showToast('Preparing audio...', 2000);
           await audioPreloadPromise;
         }
-        audioEngine.play();
+        if (audioEngine.audioBuffer) {
+          audioEngine.play();
+        } else {
+          await audioEngine.playTrack(0);
+        }
         uploadUI.classList.add('hidden');
       } catch (err) {
         console.error('Play default track error:', err);
+        showToast('Could not play track. Please upload an audio file.');
       }
     });
   }
 
   btnUpload.addEventListener('click', () => {
+    audioEngine.resumeContext();
     if (isInAppBrowser) {
       showToast('Tip: For direct audio uploads, tap \u22EE and open in Chrome / Browser');
     }

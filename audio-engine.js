@@ -92,15 +92,28 @@ export class AudioEngine {
     this.onErrorCallbacks = [];
   }
 
-  async initContext() {
+  ensureContext() {
     if (!this.audioCtx) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass();
       this._setupGraph();
     }
-    if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume();
+    return this.audioCtx;
+  }
+
+  async resumeContext() {
+    this.ensureContext();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume();
+      } catch (err) {
+        console.warn('AudioContext resume notice:', err);
+      }
     }
+  }
+
+  async initContext() {
+    await this.resumeContext();
   }
 
   _setupGraph() {
@@ -192,11 +205,12 @@ export class AudioEngine {
     { url: 'song2.mp3', name: 'SINES Theme 2' }
   ]) {
     try {
-      await this.initContext();
+      this.ensureContext();
       const items = tracks.map(t => ({
         url: t.url,
         name: t.name,
         buffer: null,
+        arrayBuffer: null,
         duration: 0,
         isDefault: true
       }));
@@ -213,12 +227,17 @@ export class AudioEngine {
       });
       if (res1.ok) {
         const ab1 = await res1.arrayBuffer();
-        const decoded1 = await this.audioCtx.decodeAudioData(ab1);
-        items[0].buffer = decoded1;
-        items[0].duration = decoded1.duration;
-        this.audioBuffer = decoded1;
-        this._notifyStateChange();
-        this._notifyPlaylistChange();
+        items[0].arrayBuffer = ab1;
+        try {
+          const decoded1 = await this.audioCtx.decodeAudioData(ab1.slice(0));
+          items[0].buffer = decoded1;
+          items[0].duration = decoded1.duration;
+          this.audioBuffer = decoded1;
+          this._notifyStateChange();
+          this._notifyPlaylistChange();
+        } catch (decErr) {
+          console.warn('Pre-decode notice for track 0:', decErr.message);
+        }
       }
 
       // Preload subsequent tracks in the background
@@ -231,9 +250,14 @@ export class AudioEngine {
             });
             if (res.ok) {
               const ab = await res.arrayBuffer();
-              const dec = await this.audioCtx.decodeAudioData(ab);
-              items[i].buffer = dec;
-              items[i].duration = dec.duration;
+              items[i].arrayBuffer = ab;
+              try {
+                const dec = await this.audioCtx.decodeAudioData(ab.slice(0));
+                items[i].buffer = dec;
+                items[i].duration = dec.duration;
+              } catch (decErr) {
+                console.warn(`Pre-decode notice for track ${i}:`, decErr.message);
+              }
             }
           } catch (e) {
             console.warn(`Background preload for track ${i} notice:`, e);
@@ -261,7 +285,7 @@ export class AudioEngine {
     this._playToken = (this._playToken || 0) + 1;
     const token = this._playToken;
 
-    await this.initContext();
+    await this.resumeContext();
     this.stopPlaybackOnly();
 
     this.currentIndex = index;
@@ -272,22 +296,24 @@ export class AudioEngine {
     // Decode buffer if not cached
     if (!this.currentTrack.buffer) {
       try {
-        let arrayBuffer;
-        if (this.currentTrack.file) {
-          arrayBuffer = await this.currentTrack.file.arrayBuffer();
-        } else if (this.currentTrack.url) {
-          const res = await fetch(this.currentTrack.url);
-          arrayBuffer = await res.arrayBuffer();
+        let arrayBuffer = this.currentTrack.arrayBuffer;
+        if (!arrayBuffer) {
+          if (this.currentTrack.file) {
+            arrayBuffer = await this.currentTrack.file.arrayBuffer();
+          } else if (this.currentTrack.url) {
+            const res = await fetch(this.currentTrack.url);
+            arrayBuffer = await res.arrayBuffer();
+          }
         }
-        if (this._playToken !== token) return; // User switched track while reading
+        if (this._playToken !== token) return;
         const decoded = await this.audioCtx.decodeAudioData(arrayBuffer);
-        if (this._playToken !== token) return; // User switched track while decoding
+        if (this._playToken !== token) return;
         this.currentTrack.buffer = decoded;
         this.currentTrack.duration = decoded.duration;
       } catch (err) {
         if (this._playToken !== token) return;
         console.error('Error decoding audio:', err);
-        this._notifyError('Could not decode this audio file. Please try an MP3, WAV, or M4A track.');
+        this._notifyError('Could not decode audio file.');
         return;
       }
     }
