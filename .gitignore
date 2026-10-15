@@ -19,6 +19,7 @@
 *.m4a
 *.aac
 !song.mp3
+!song2.mp3
 
 # Markdown documentation
 *.md

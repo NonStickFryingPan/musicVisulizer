@@ -6,6 +6,12 @@ window.addEventListener('DOMContentLoaded', () => {
   const audioEngine = new AudioEngine();
   const renderer = new ShaderRenderer(canvas);
 
+  // Eager background preload during preloader for zero-latency instant playback
+  const audioPreloadPromise = audioEngine.preloadDefaultTracks([
+    { url: 'song.mp3', name: 'SINES Theme 1' },
+    { url: 'song2.mp3', name: 'SINES Theme 2' }
+  ]);
+
   const btnPlayDefault = document.getElementById('btn-play-default');
   const btnUpload = document.getElementById('btn-upload');
   const fileInput = document.getElementById('file-input');
@@ -48,8 +54,9 @@ window.addEventListener('DOMContentLoaded', () => {
       targetPct = Math.min(98.0, 80.0 + extraSec * 0.75);
     }
 
-    if (renderer.isLoaded) {
-      currentPct += (100.0 - currentPct) * 0.16;
+    const isAudioReady = audioEngine.audioBuffer !== null;
+    if (renderer.isLoaded && isAudioReady) {
+      currentPct += (100.0 - currentPct) * 0.20;
       if (currentPct >= 99.4) {
         currentPct = 100;
         preloaderFinished = true;
@@ -176,6 +183,7 @@ window.addEventListener('DOMContentLoaded', () => {
       valid.push(f);
     }
     if (valid.length > 0) {
+      showToast(`Loading ${valid.length > 1 ? `${valid.length} tracks` : valid[0].name}...`, 2500);
       audioEngine.addFilesToPlaylist(valid);
     }
   }
@@ -184,8 +192,8 @@ window.addEventListener('DOMContentLoaded', () => {
     btnPlayDefault.addEventListener('click', async () => {
       try {
         await audioEngine.initContext();
-        if (!audioEngine.playlist || audioEngine.playlist.length === 0) {
-          await audioEngine.preloadDefaultTrack('song.mp3', 'SINES Theme');
+        if (!audioEngine.audioBuffer) {
+          await audioPreloadPromise;
         }
         audioEngine.play();
         uploadUI.classList.add('hidden');

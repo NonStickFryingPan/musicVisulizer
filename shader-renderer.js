@@ -652,7 +652,7 @@ export class ShaderRenderer {
     const h = rect ? rect.height : window.innerHeight;
     if (w <= 0 || h <= 0) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
     this.canvas.width = Math.floor(w * dpr);
     this.canvas.height = Math.floor(h * dpr);
     this.canvas.style.width = `${w}px`;

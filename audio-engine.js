@@ -42,15 +42,15 @@ export class AudioEngine {
       { name: 'air', min: 12000, max: 20000 }
     ];
 
-    this.bandHistory = this.bandDefs.map(() => []);
     this.bandEnvelopes = new Float32Array(this.bandDefs.length);
     this.bandRawDb = new Float32Array(this.bandDefs.length);
     this.bandNorm = new Float32Array(this.bandDefs.length);
-    this.bandEnvelopesL = new Float32Array(this.bandDefs.length);
-    this.bandEnvelopesR = new Float32Array(this.bandDefs.length);
+    this.bandFloor = new Float32Array(this.bandDefs.length).fill(-75);
+    this.bandCeil = new Float32Array(this.bandDefs.length).fill(-25);
 
     // Features
     this.prevMag = null;
+    this.mag = null;
     this.spectralFlux = 0;
     this.fluxHistory = [];
     this.isOnset = false;
@@ -65,13 +65,19 @@ export class AudioEngine {
     this.percussionProxy = 0;
 
     // Peak energy tracking
-    this.energyHistory = [];
+    this.energyCeil = 0.5;
     this.climaxFlash = 0.0;
     this.isPeakClimax = false;
 
+    // Fast dB to linear LUT: -100dB to +20dB in 0.1dB steps (1201 entries)
+    this.dbToLinearLUT = new Float32Array(1201);
+    for (let i = 0; i <= 1200; i++) {
+      const db = -100 + i * 0.1;
+      this.dbToLinearLUT[i] = Math.pow(10, db / 20);
+    }
+
     // FFT buffers
     this.freqDataMid = null;
-    this.freqDataSide = null;
     this.freqDataL = null;
     this.freqDataR = null;
     this.timeData = null;
@@ -117,7 +123,6 @@ export class AudioEngine {
     this.analyserL = createAnalyser();
     this.analyserR = createAnalyser();
     this.analyserMid = createAnalyser();
-    this.analyserSide = createAnalyser();
 
     this.splitterNode = this.audioCtx.createChannelSplitter(2);
 
@@ -127,12 +132,6 @@ export class AudioEngine {
     const midGainR = this.audioCtx.createGain();
     midGainR.gain.value = 0.5;
 
-    // Side = (L - R) * 0.5
-    const sideGainL = this.audioCtx.createGain();
-    sideGainL.gain.value = 0.5;
-    const sideGainR = this.audioCtx.createGain();
-    sideGainR.gain.value = -0.5;
-
     this.splitterNode.connect(this.analyserL, 0);
     this.splitterNode.connect(this.analyserR, 1);
 
@@ -141,18 +140,13 @@ export class AudioEngine {
     midGainL.connect(this.analyserMid);
     midGainR.connect(this.analyserMid);
 
-    this.splitterNode.connect(sideGainL, 0);
-    this.splitterNode.connect(sideGainR, 1);
-    sideGainL.connect(this.analyserSide);
-    sideGainR.connect(this.analyserSide);
-
     const binCount = this.analyserMid.frequencyBinCount;
     this.freqDataMid = new Float32Array(binCount);
-    this.freqDataSide = new Float32Array(binCount);
     this.freqDataL = new Float32Array(binCount);
     this.freqDataR = new Float32Array(binCount);
     this.timeData = new Float32Array(binCount);
     this.prevMag = new Float32Array(binCount);
+    this.mag = new Float32Array(binCount);
   }
 
   // Playlist management
@@ -169,53 +163,93 @@ export class AudioEngine {
           file: file,
           name: file.name.replace(/\.[^/.]+$/, ''),
           buffer: null,
-          duration: 0
+          duration: 0,
+          isDefault: false
         });
       }
     }
 
     if (newItems.length === 0) return;
 
-    const wasEmpty = this.playlist.length === 0;
-    this.playlist.push(...newItems);
-    this._notifyPlaylistChange();
-
-    if (wasEmpty) {
+    // If playlist only contains default tracks, replace them with user's uploaded tracks
+    const onlyDefaults = this.playlist.length === 0 || this.playlist.every(t => t.isDefault);
+    if (onlyDefaults) {
+      this.stopPlaybackOnly();
+      this.playlist = newItems;
+      this._notifyPlaylistChange();
       await this.playTrack(0);
+    } else {
+      this.playlist.push(...newItems);
+      this._notifyPlaylistChange();
+      if (!this.isPlaying && !this.isPaused) {
+        await this.playTrack(this.playlist.length - newItems.length);
+      }
+    }
+  }
+
+  async preloadDefaultTracks(tracks = [
+    { url: 'song.mp3', name: 'SINES Theme 1' },
+    { url: 'song2.mp3', name: 'SINES Theme 2' }
+  ]) {
+    try {
+      await this.initContext();
+      const items = tracks.map(t => ({
+        url: t.url,
+        name: t.name,
+        buffer: null,
+        duration: 0,
+        isDefault: true
+      }));
+
+      this.playlist = items;
+      this.currentIndex = 0;
+      this.currentTrack = items[0];
+      this._notifyPlaylistChange();
+
+      // Preload first track immediately for zero startup latency
+      const streamUrl = tracks[0].url.includes('?') ? tracks[0].url : `${tracks[0].url}?stream=1`;
+      const res1 = await fetch(streamUrl, {
+        headers: { 'Accept': 'audio/*, application/octet-stream' }
+      });
+      if (res1.ok) {
+        const ab1 = await res1.arrayBuffer();
+        const decoded1 = await this.audioCtx.decodeAudioData(ab1);
+        items[0].buffer = decoded1;
+        items[0].duration = decoded1.duration;
+        this.audioBuffer = decoded1;
+        this._notifyStateChange();
+        this._notifyPlaylistChange();
+      }
+
+      // Preload subsequent tracks in the background
+      (async () => {
+        for (let i = 1; i < items.length; i++) {
+          try {
+            const u = items[i].url.includes('?') ? items[i].url : `${items[i].url}?stream=1`;
+            const res = await fetch(u, {
+              headers: { 'Accept': 'audio/*, application/octet-stream' }
+            });
+            if (res.ok) {
+              const ab = await res.arrayBuffer();
+              const dec = await this.audioCtx.decodeAudioData(ab);
+              items[i].buffer = dec;
+              items[i].duration = dec.duration;
+            }
+          } catch (e) {
+            console.warn(`Background preload for track ${i} notice:`, e);
+          }
+        }
+      })();
+
+      return items[0];
+    } catch (err) {
+      console.warn('Preload default tracks notice:', err);
+      return null;
     }
   }
 
   async preloadDefaultTrack(url = 'song.mp3', name = 'SINES Theme') {
-    try {
-      const streamUrl = url.includes('?') ? url : `${url}?stream=1`;
-      const response = await fetch(streamUrl, {
-        headers: { 'Accept': 'audio/*, application/octet-stream' }
-      });
-      if (!response.ok) return null;
-      const arrayBuffer = await response.arrayBuffer();
-      await this.initContext();
-      const decoded = await this.audioCtx.decodeAudioData(arrayBuffer);
-      const defaultItem = {
-        url: url,
-        name: name,
-        buffer: decoded,
-        duration: decoded.duration
-      };
-      if (this.playlist.length === 0) {
-        this.playlist = [defaultItem];
-        this.currentIndex = 0;
-        this.currentTrack = defaultItem;
-        this.audioBuffer = decoded;
-        this.isDemoTrack = false;
-        this.pauseOffset = 0;
-        this._notifyPlaylistChange();
-        this._notifyStateChange();
-      }
-      return defaultItem;
-    } catch (err) {
-      console.warn('Preload default track notice:', err.message);
-      return null;
-    }
+    return this.preloadDefaultTracks([{ url, name }]);
   }
 
   setLoop(enabled) {
@@ -621,27 +655,30 @@ export class AudioEngine {
     const binWidth = nyquist / binCount;
 
     this.analyserMid.getFloatFrequencyData(this.freqDataMid);
-    this.analyserSide.getFloatFrequencyData(this.freqDataSide);
     this.analyserL.getFloatFrequencyData(this.freqDataL);
     this.analyserR.getFloatFrequencyData(this.freqDataR);
     this.analyserMid.getFloatTimeDomainData(this.timeData);
 
-    // RMS Loudness
+    // RMS Loudness (stride 2 for fast computation)
     let sumSq = 0;
-    for (let i = 0; i < this.timeData.length; i++) {
-      sumSq += this.timeData[i] * this.timeData[i];
+    const timeLen = this.timeData.length;
+    for (let i = 0; i < timeLen; i += 2) {
+      const s = this.timeData[i];
+      sumSq += s * s;
     }
-    this.rms = Math.sqrt(sumSq / this.timeData.length) * this.gainMultiplier;
+    this.rms = Math.sqrt((sumSq * 2) / timeLen) * this.gainMultiplier;
     this.rmsSmooth += 0.15 * (this.rms - this.rmsSmooth);
 
-    // Linear magnitude & Spectral Centroid
-    const mag = new Float32Array(binCount);
+    // Fast linear magnitude & Spectral Centroid using LUT (zero Math.pow calls)
+    const mag = this.mag;
+    const lut = this.dbToLinearLUT;
     let totalMag = 0;
     let weightedFreqSum = 0;
 
     for (let i = 0; i < binCount; i++) {
       const db = this.freqDataMid[i];
-      const linear = Math.pow(10, db / 20);
+      const idx = db <= -100 ? 0 : (db >= 20 ? 1200 : Math.round((db + 100) * 10));
+      const linear = lut[idx];
       mag[i] = linear;
       totalMag += linear;
       weightedFreqSum += (i * binWidth) * linear;
@@ -686,41 +723,35 @@ export class AudioEngine {
       this.onsetIntensity *= 0.88;
     }
 
-    // 7 Bands + Adaptive Normalization
-    const historyLimit = Math.round(this.historyDurationSec * 60);
-
+    // 7 Bands + O(1) Asymmetric Floor/Ceiling Normalization (Zero Sorting, Zero GC)
     for (let b = 0; b < this.bandDefs.length; b++) {
       const def = this.bandDefs[b];
       const startBin = Math.max(0, Math.floor(def.min / binWidth));
       const endBin = Math.min(binCount - 1, Math.ceil(def.max / binWidth));
 
       let bandEnergy = 0;
-      let bandEnergyL = 0;
-      let bandEnergyR = 0;
-
       for (let bin = startBin; bin <= endBin; bin++) {
-        bandEnergy += mag[bin] * mag[bin];
-        const linL = Math.pow(10, this.freqDataL[bin] / 20);
-        const linR = Math.pow(10, this.freqDataR[bin] / 20);
-        bandEnergyL += linL * linL;
-        bandEnergyR += linR * linR;
+        const m = mag[bin];
+        bandEnergy += m * m;
       }
 
-      const bandDb = 20 * Math.log10(Math.sqrt(bandEnergy) * this.gainMultiplier + 1e-9);
+      const bandDb = 10 * Math.log10(bandEnergy * this.gainMultiplier * this.gainMultiplier + 1e-9);
       this.bandRawDb[b] = bandDb;
 
-      const hist = this.bandHistory[b];
-      hist.push(bandDb);
-      if (hist.length > historyLimit) hist.shift();
+      if (bandDb < this.bandFloor[b]) {
+        this.bandFloor[b] += (bandDb - this.bandFloor[b]) * 0.15;
+      } else {
+        this.bandFloor[b] += (bandDb - this.bandFloor[b]) * 0.0015;
+      }
 
-      const sorted = [...hist].sort((a, b) => a - b);
-      const loIdx = Math.floor(sorted.length * 0.05);
-      const hiIdx = Math.floor(sorted.length * 0.95);
-      const lo = sorted[loIdx] !== undefined ? sorted[loIdx] : -80;
-      const hi = sorted[hiIdx] !== undefined ? sorted[hiIdx] : -20;
-      const range = Math.max(8.0, hi - lo);
+      if (bandDb > this.bandCeil[b]) {
+        this.bandCeil[b] += (bandDb - this.bandCeil[b]) * 0.20;
+      } else {
+        this.bandCeil[b] += (bandDb - this.bandCeil[b]) * 0.002;
+      }
 
-      const norm = Math.max(0, Math.min(1, (bandDb - lo) / range));
+      const range = Math.max(8.0, this.bandCeil[b] - this.bandFloor[b]);
+      const norm = Math.max(0, Math.min(1, (bandDb - this.bandFloor[b]) / range));
       this.bandNorm[b] = norm;
 
       const currentEnv = this.bandEnvelopes[b];
@@ -729,47 +760,31 @@ export class AudioEngine {
       } else {
         this.bandEnvelopes[b] += this.release * (norm - currentEnv);
       }
-
-      const normL = Math.max(0, Math.min(1, (20 * Math.log10(Math.sqrt(bandEnergyL) * this.gainMultiplier + 1e-9) - lo) / range));
-      const normR = Math.max(0, Math.min(1, (20 * Math.log10(Math.sqrt(bandEnergyR) * this.gainMultiplier + 1e-9) - lo) / range));
-
-      if (normL > this.bandEnvelopesL[b]) {
-        this.bandEnvelopesL[b] += this.attack * (normL - this.bandEnvelopesL[b]);
-      } else {
-        this.bandEnvelopesL[b] += this.release * (normL - this.bandEnvelopesL[b]);
-      }
-
-      if (normR > this.bandEnvelopesR[b]) {
-        this.bandEnvelopesR[b] += this.attack * (normR - this.bandEnvelopesR[b]);
-      } else {
-        this.bandEnvelopesR[b] += this.release * (normR - this.bandEnvelopesR[b]);
-      }
     }
 
     // Vocal & Percussion Proxies
     this.vocalProxy = (this.bandEnvelopes[2] * 0.4 + this.bandEnvelopes[3] * 0.6);
     this.percussionProxy = Math.min(1.0, this.onsetIntensity * 0.6 + this.bandEnvelopes[4] * 0.4);
 
-    // Stereo Width & Pan
+    // Fast Stereo Width & Pan from L & R frequency spectrum (Zero Math.pow)
     let sumL = 0, sumR = 0;
-    for (let b = 0; b < this.bandDefs.length; b++) {
-      sumL += this.bandEnvelopesL[b];
-      sumR += this.bandEnvelopesR[b];
+    for (let bin = 0; bin < binCount; bin += 8) {
+      sumL += Math.max(0, this.freqDataL[bin] + 90);
+      sumR += Math.max(0, this.freqDataR[bin] + 90);
     }
     const totLR = sumL + sumR + 1e-5;
     this.stereoPan = (sumR - sumL) / totLR;
     this.stereoWidth = Math.abs(sumR - sumL) / totLR;
 
-    // Peak energy detection
+    // Peak energy detection with running peak envelope (Zero sort, Zero GC)
     const currentCombinedEnergy = this.rmsSmooth * 0.5 + this.bandEnvelopes[0] * 0.3 + this.bandEnvelopes[1] * 0.2;
-    this.energyHistory.push(currentCombinedEnergy);
-    if (this.energyHistory.length > 240) this.energyHistory.shift();
-
-    const sortedEnergy = [...this.energyHistory].sort((a, b) => a - b);
-    const p95Idx = Math.floor(sortedEnergy.length * 0.95);
-    const p95Energy = sortedEnergy[p95Idx] !== undefined ? sortedEnergy[p95Idx] : 0.8;
-
-    this.isPeakClimax = (this.energyHistory.length >= 30) && (currentCombinedEnergy >= p95Energy) && (currentCombinedEnergy > 0.42);
+    if (currentCombinedEnergy > this.energyCeil) {
+      this.energyCeil += (currentCombinedEnergy - this.energyCeil) * 0.25;
+    } else {
+      this.energyCeil += (currentCombinedEnergy - this.energyCeil) * 0.002;
+    }
+    const p95Energy = Math.max(0.42, this.energyCeil * 0.95);
+    this.isPeakClimax = (currentCombinedEnergy >= p95Energy) && (currentCombinedEnergy > 0.42);
 
     if (this.isPeakClimax) {
       this.climaxFlash += (1.0 - this.climaxFlash) * 0.22;
@@ -780,8 +795,6 @@ export class AudioEngine {
 
     return {
       bandEnvelopes: this.bandEnvelopes,
-      bandEnvelopesL: this.bandEnvelopesL,
-      bandEnvelopesR: this.bandEnvelopesR,
       spectralFlux: this.spectralFlux,
       isOnset: this.isOnset,
       onsetIntensity: this.onsetIntensity,
@@ -799,8 +812,6 @@ export class AudioEngine {
   _getEmptyState() {
     return {
       bandEnvelopes: this.bandEnvelopes,
-      bandEnvelopesL: this.bandEnvelopesL,
-      bandEnvelopesR: this.bandEnvelopesR,
       spectralFlux: 0,
       isOnset: false,
       onsetIntensity: 0,
