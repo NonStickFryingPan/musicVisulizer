@@ -195,7 +195,6 @@ window.addEventListener('DOMContentLoaded', () => {
       try {
         await audioEngine.resumeContext();
         if (!audioEngine.audioBuffer) {
-          showToast('Preparing audio...', 2000);
           await audioPreloadPromise;
         }
         if (audioEngine.audioBuffer) {
