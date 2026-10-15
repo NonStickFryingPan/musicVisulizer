@@ -702,14 +702,15 @@ export class ShaderRenderer {
     const env = audioState ? audioState.bandEnvelopes : new Float32Array(7);
     const sens = this.smoothSensitivity;
 
-    const rawAudioLevel = audioState ? Math.min(1.0, audioState.rms * 1.5 * sens) : 0.04;
-    const rawBassLevel = audioState ? Math.min(1.0, (env[0] * 0.7 + env[1] * 0.6) * sens) : 0.04;
-    const rawMidLevel = audioState ? Math.min(1.0, (env[2] * 0.5 + env[3] * 0.6) * sens) : 0.04;
-    const rawTrebleLevel = audioState ? Math.min(1.0, (env[4] * 0.5 + env[5] * 0.7 + env[6] * 0.6) * sens) : 0.04;
-    const rawStereoPan = audioState ? audioState.stereoPan : 0.0;
-    const rawCentroid = audioState ? audioState.spectralCentroid : 0.3;
-    const rawOnset = audioState ? audioState.onsetIntensity : 0.0;
-    const rawClimax = audioState ? audioState.climaxFlash : 0.0;
+    const isPlaying = this.isPlaying;
+    const rawAudioLevel = isPlaying && audioState ? Math.min(1.0, audioState.rms * 1.5 * sens) : 0.0;
+    const rawBassLevel = isPlaying && audioState ? Math.min(1.0, (env[0] * 0.7 + env[1] * 0.6) * sens) : 0.0;
+    const rawMidLevel = isPlaying && audioState ? Math.min(1.0, (env[2] * 0.5 + env[3] * 0.6) * sens) : 0.0;
+    const rawTrebleLevel = isPlaying && audioState ? Math.min(1.0, (env[4] * 0.5 + env[5] * 0.7 + env[6] * 0.6) * sens) : 0.0;
+    const rawStereoPan = isPlaying && audioState ? audioState.stereoPan : 0.0;
+    const rawCentroid = isPlaying && audioState ? audioState.spectralCentroid : 0.3;
+    const rawOnset = isPlaying && audioState ? audioState.onsetIntensity : 0.0;
+    const rawClimax = isPlaying && audioState ? audioState.climaxFlash : 0.0;
 
     this.smoothAudioLevel   = smoothEase(this.smoothAudioLevel, rawAudioLevel, 0.22, 0.07);
     this.smoothBassLevel    = smoothEase(this.smoothBassLevel, rawBassLevel, 0.24, 0.06);
@@ -720,7 +721,7 @@ export class ShaderRenderer {
     this.smoothOnset        = smoothEase(this.smoothOnset, rawOnset, 0.32, 0.07);
     this.smoothClimaxFlash  = smoothEase(this.smoothClimaxFlash, rawClimax, 0.20, 0.05);
 
-    const isAudioPlaying = this.isPlaying || (audioState && audioState.rms > 0.002);
+    const isAudioPlaying = isPlaying && (audioState && audioState.rms > 0.002);
 
     // Cursor strength fade
     const targetCursorStrength = isAudioPlaying ? 0.0 : 0.95;

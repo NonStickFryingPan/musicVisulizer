@@ -255,40 +255,67 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function updateChrome(state) {
     if (!preloaderFinished) return;
-    if (audioEngine.isPlaying) {
+    if (audioEngine.isPlaying || audioEngine.isPaused) {
       uploadUI.classList.add('hidden');
     } else {
       uploadUI.classList.remove('hidden');
       const label = btnPlayDefault ? btnPlayDefault.querySelector('span') : null;
       if (label) {
-        label.textContent = audioEngine.isPaused ? 'Resume' : 'Play song';
+        label.textContent = 'Play song';
       }
     }
   }
 
-  // Keyboard shortcuts
-  window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  // Desktop keyboard controls
+  window.addEventListener('keydown', async (e) => {
+    if (e.target && e.target.closest && e.target.closest('input, select, textarea, [contenteditable="true"]')) return;
+
     if (e.code === 'Space') {
       e.preventDefault();
-      if (audioEngine.isPlaying) audioEngine.pause();
-      else audioEngine.play();
+      await audioEngine.resumeContext();
+      if (audioEngine.isPlaying) {
+        audioEngine.pause();
+        showToast('Paused', 1000);
+      } else {
+        if (!audioEngine.audioBuffer) {
+          await audioPreloadPromise;
+        }
+        if (audioEngine.audioBuffer) {
+          audioEngine.play();
+        } else {
+          await audioEngine.playTrack(0);
+        }
+        uploadUI.classList.add('hidden');
+        showToast('Playing', 1000);
+      }
     } else if (e.code === 'ArrowRight') {
       e.preventDefault();
-      if (e.shiftKey) audioEngine.nextTrack();
-      else audioEngine.seek(audioEngine.getCurrentTime() + 5);
+      if (audioEngine.playlist.length > 0) {
+        await audioEngine.resumeContext();
+        audioEngine.nextTrack();
+        uploadUI.classList.add('hidden');
+        showToast(`Track: ${audioEngine.getTrackName()}`, 1500);
+      }
     } else if (e.code === 'ArrowLeft') {
       e.preventDefault();
-      if (e.shiftKey) audioEngine.prevTrack();
-      else audioEngine.seek(Math.max(0, audioEngine.getCurrentTime() - 5));
+      if (audioEngine.playlist.length > 0) {
+        await audioEngine.resumeContext();
+        audioEngine.prevTrack();
+        uploadUI.classList.add('hidden');
+        showToast(`Track: ${audioEngine.getTrackName()}`, 1500);
+      }
     } else if (e.code === 'ArrowUp') {
       e.preventDefault();
-      const v = Math.min(1, (audioEngine.volume ?? 1) + 0.05);
-      audioEngine.setVolume(v);
+      const cur = audioEngine.volume !== undefined ? audioEngine.volume : 1.0;
+      const newVol = Math.min(1.0, Math.round((cur + 0.05) * 100) / 100);
+      audioEngine.setVolume(newVol);
+      showToast(`Volume: ${Math.round(newVol * 100)}%`, 1000);
     } else if (e.code === 'ArrowDown') {
       e.preventDefault();
-      const v = Math.max(0, (audioEngine.volume ?? 1) - 0.05);
-      audioEngine.setVolume(v);
+      const cur = audioEngine.volume !== undefined ? audioEngine.volume : 1.0;
+      const newVol = Math.max(0.0, Math.round((cur - 0.05) * 100) / 100);
+      audioEngine.setVolume(newVol);
+      showToast(`Volume: ${Math.round(newVol * 100)}%`, 1000);
     } else if (e.key === 'f' || e.key === 'F') {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
       else document.exitFullscreen().catch(() => {});
