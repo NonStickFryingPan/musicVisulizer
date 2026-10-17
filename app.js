@@ -19,7 +19,6 @@ window.addEventListener('DOMContentLoaded', () => {
   const btnUpload = document.getElementById('btn-upload');
   const fileInput = document.getElementById('file-input');
   const uploadUI = document.getElementById('upload-ui');
-  const toast = document.getElementById('toast');
 
   // Floating Pill Mobile Bottom Dock elements
   const mobileDock = document.getElementById('mobile-dock');
@@ -38,20 +37,6 @@ window.addEventListener('DOMContentLoaded', () => {
     const s = Math.floor(sec % 60);
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
-
-  let toastTimer = null;
-  function showToast(msg, duration = 4200) {
-    if (!toast) return;
-    toast.textContent = msg;
-    toast.classList.remove('hidden');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast.classList.add('hidden');
-    }, duration);
-  }
-
-  const ua = navigator.userAgent || '';
-  const isInAppBrowser = /FBAN|FBAV|Instagram|WhatsApp|Line|Twitter|Snapchat|MicroMessenger|musical_ly/i.test(ua);
 
   // Preloader (Desktop: Photonic Impacts, Mobile: Minimal Bar)
   const preloader = document.getElementById('preloader');
@@ -293,14 +278,6 @@ window.addEventListener('DOMContentLoaded', () => {
       renderer.setPlaying(!!audioEngine.isPlaying);
       renderer.render(audioState);
       updateScrubber();
-
-      if (mobileDock && audioEngine.isPlaying && audioState && audioState.bandEnvelopes) {
-        const bass = (audioState.bandEnvelopes[0] || 0) * 0.65 + (audioState.bandEnvelopes[1] || 0) * 0.35;
-        const glow = Math.min(1.0, bass * 1.35).toFixed(3);
-        mobileDock.style.setProperty('--dock-glow', glow);
-      } else if (mobileDock) {
-        mobileDock.style.setProperty('--dock-glow', '0');
-      }
     } catch (err) {
       console.error('Render loop error:', err);
     }
@@ -381,13 +358,12 @@ window.addEventListener('DOMContentLoaded', () => {
     const valid = [];
     for (const f of fileArr) {
       if (f.size > MAX_FILE_SIZE) {
-        showToast(`"${f.name}" exceeds the 100MB limit. Please choose a smaller track.`);
+        console.warn(`"${f.name}" exceeds the 100MB limit. Skipped.`);
         continue;
       }
       valid.push(f);
     }
     if (valid.length > 0) {
-      showToast(`Loading ${valid.length > 1 ? `${valid.length} tracks` : valid[0].name}...`, 2500);
       audioEngine.addFilesToPlaylist(valid);
     }
   }
@@ -408,7 +384,6 @@ window.addEventListener('DOMContentLoaded', () => {
         uploadUI.classList.add('hidden');
       } catch (err) {
         console.error('Play default track error:', err);
-        showToast('Could not play track. Please upload an audio file.');
       } finally {
         btnPlayDefault.classList.remove('pending');
       }
@@ -417,9 +392,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   btnUpload.addEventListener('click', () => {
     audioEngine.resumeContext();
-    if (isInAppBrowser) {
-      showToast('Tip: For direct audio uploads, tap \u22EE and open in Chrome / Browser');
-    }
     fileInput.click();
   });
 
@@ -481,7 +453,6 @@ window.addEventListener('DOMContentLoaded', () => {
         await audioEngine.resumeContext();
         if (audioEngine.isPlaying) {
           audioEngine.pause();
-          showToast('Paused', 1000);
         } else {
           if (!audioEngine.audioBuffer) {
             await audioPreloadPromise;
@@ -492,7 +463,6 @@ window.addEventListener('DOMContentLoaded', () => {
             await audioEngine.playTrack(0);
           }
           uploadUI.classList.add('hidden');
-          showToast('Playing', 1000);
         }
       } catch (err) {
         console.error('Dock play error:', err);
@@ -515,7 +485,6 @@ window.addEventListener('DOMContentLoaded', () => {
             const prevIdx = (audioEngine.currentIndex - 1 + audioEngine.playlist.length) % audioEngine.playlist.length;
             await audioEngine.playTrack(prevIdx);
             uploadUI.classList.add('hidden');
-            showToast(`Track: ${audioEngine.getTrackName()}`, 1200);
           }
         } else {
           // Single tap -> restarts song from start
@@ -525,7 +494,6 @@ window.addEventListener('DOMContentLoaded', () => {
             audioEngine.play();
             uploadUI.classList.add('hidden');
           }
-          showToast('Restarted', 1000);
         }
       } catch (err) {
         console.error('Dock back error:', err);
@@ -540,7 +508,6 @@ window.addEventListener('DOMContentLoaded', () => {
         if (audioEngine.playlist.length > 0) {
           audioEngine.nextTrack();
           uploadUI.classList.add('hidden');
-          showToast(`Track: ${audioEngine.getTrackName()}`, 1200);
         }
       } catch (err) {
         console.error('Dock next error:', err);
@@ -551,9 +518,6 @@ window.addEventListener('DOMContentLoaded', () => {
   if (dockBtnUpload) {
     dockBtnUpload.addEventListener('click', () => {
       audioEngine.resumeContext();
-      if (isInAppBrowser) {
-        showToast('Tip: For direct audio uploads, tap ⋮ and open in Chrome / Browser');
-      }
       fileInput.click();
     });
   }
@@ -603,7 +567,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   audioEngine.onError((msg) => {
-    showToast(msg);
+    console.error('Audio error:', msg);
   });
 
   audioEngine.onStateChange((state) => {
@@ -636,7 +600,6 @@ window.addEventListener('DOMContentLoaded', () => {
       await audioEngine.resumeContext();
       if (audioEngine.isPlaying) {
         audioEngine.pause();
-        showToast('Paused', 1000);
       } else {
         if (!audioEngine.audioBuffer) {
           await audioPreloadPromise;
@@ -647,7 +610,6 @@ window.addEventListener('DOMContentLoaded', () => {
           await audioEngine.playTrack(0);
         }
         uploadUI.classList.add('hidden');
-        showToast('Playing', 1000);
       }
     } else if (e.code === 'ArrowRight') {
       e.preventDefault();
@@ -655,7 +617,6 @@ window.addEventListener('DOMContentLoaded', () => {
         await audioEngine.resumeContext();
         audioEngine.nextTrack();
         uploadUI.classList.add('hidden');
-        showToast(`Track: ${audioEngine.getTrackName()}`, 1500);
       }
     } else if (e.code === 'ArrowLeft') {
       e.preventDefault();
@@ -663,20 +624,17 @@ window.addEventListener('DOMContentLoaded', () => {
         await audioEngine.resumeContext();
         audioEngine.prevTrack();
         uploadUI.classList.add('hidden');
-        showToast(`Track: ${audioEngine.getTrackName()}`, 1500);
       }
     } else if (e.code === 'ArrowUp') {
       e.preventDefault();
       const cur = audioEngine.volume !== undefined ? audioEngine.volume : 1.0;
       const newVol = Math.min(1.0, Math.round((cur + 0.05) * 100) / 100);
       audioEngine.setVolume(newVol);
-      showToast(`Volume: ${Math.round(newVol * 100)}%`, 1000);
     } else if (e.code === 'ArrowDown') {
       e.preventDefault();
       const cur = audioEngine.volume !== undefined ? audioEngine.volume : 1.0;
       const newVol = Math.max(0.0, Math.round((cur - 0.05) * 100) / 100);
       audioEngine.setVolume(newVol);
-      showToast(`Volume: ${Math.round(newVol * 100)}%`, 1000);
     } else if (e.key === 'f' || e.key === 'F') {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
       else document.exitFullscreen().catch(() => {});
