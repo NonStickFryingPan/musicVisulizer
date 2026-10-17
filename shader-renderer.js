@@ -367,7 +367,7 @@ export class ShaderRenderer {
         } else if (mode == 4) {
           return vec3(0.2, 1.0, 0.45);
         }
-        return vec3(1.0, 0.86, 0.56);
+        return vec3(1.0, 0.82, 0.46);
       }
 
       vec3 applyColorTheme(int mode, vec2 uv, vec3 baseColor, float reveal, float centroid) {
@@ -403,8 +403,8 @@ export class ShaderRenderer {
         uv = (uv - 0.5) * u_viewScale + 0.5 + u_viewPan;
         uv = clamp(uv, 0.0, 1.0);
 
-        // Torch spotlight / idle morph
-        vec2 cursorDelta = uv - u_mouse;
+        // Torch spotlight / idle morph (isotropic circular aspect correction)
+        vec2 cursorDelta = vec2(uv.x - u_mouse.x, (uv.y - u_mouse.y) * 1.3364);
         float cursorAngle = atan(cursorDelta.y, cursorDelta.x + 1e-6);
         float cursorRad = length(cursorDelta);
         float idleWobble = 1.0
@@ -431,15 +431,23 @@ export class ShaderRenderer {
         vec4 sceneCol = texture2D(u_scene, uv);
         vec4 blindsCol = texture2D(u_blinds, uv);
         vec4 diffSharp = texture2D(u_diffSharp, uv);
-        vec4 diffBlur  = texture2D(u_diffBlur, uv);
+        // Multi-tap soft blur kernel for lush optical bleed on all displays
+        vec2 blurOffset = vec2(0.0028, 0.0028) * u_viewScale;
+        vec4 diffBlur = (
+          texture2D(u_diffBlur, uv) * 0.40 +
+          texture2D(u_diffBlur, uv + vec2(blurOffset.x, blurOffset.y)) * 0.15 +
+          texture2D(u_diffBlur, uv - vec2(blurOffset.x, blurOffset.y)) * 0.15 +
+          texture2D(u_diffBlur, uv + vec2(-blurOffset.x, blurOffset.y)) * 0.15 +
+          texture2D(u_diffBlur, uv + vec2(blurOffset.x, -blurOffset.y)) * 0.15
+        );
         vec4 diffWide  = texture2D(u_diffWideBlur, uv);
 
         float sharpLum = dot(diffSharp.rgb, vec3(0.299, 0.587, 0.114));
         float blurLum  = dot(diffBlur.rgb, vec3(0.299, 0.587, 0.114));
         float wideLum  = dot(diffWide.rgb, vec3(0.299, 0.587, 0.114));
 
-        // Window mask blend
-        float mask = mix(sharpLum, blurLum, u_feather * 0.85);
+        // Window mask blend with enhanced feathering for soft Retina falloff
+        float mask = mix(sharpLum, blurLum, clamp(u_feather * 0.88 + 0.12, 0.0, 1.0));
 
         // Mode blend
         float driveA = getModeDrive(u_prevVisualMode, uv, u_audioLevel, u_bassLevel, u_midLevel, u_trebleLevel, u_stereoPan, u_onset, u_time);
@@ -453,9 +461,9 @@ export class ShaderRenderer {
         float idleBreath = smoothstep(0.0, 1.0, idleSine) * 0.035 + 0.04;
         drive = max(idleBreath, drive);
 
-        // Reveal threshold
+        // Reveal threshold with wider feather band for smooth photographic falloff
         float threshold = clamp(1.0 - drive * 1.35, 0.02, 0.98);
-        float featherBand = max(0.08, u_feather * 0.55);
+        float featherBand = max(0.14, u_feather * 0.65);
         float rawReveal = smoothstep(threshold - featherBand, threshold + featherBand, mask);
         float reveal = smoothstep(0.0, 1.0, rawReveal);
 
@@ -476,9 +484,16 @@ export class ShaderRenderer {
         float bloomWide   = smoothstep(0.02, 0.40, wideLum);
         float combinedBloom = (bloomMedium * 0.7 + bloomWide * 0.5) * (drive * 0.8 + u_onset * 0.45);
 
-        // Light bleed
-        vec3 bloomBleed = emitLightColor * (combinedBloom * u_bloom * 0.65);
+        // Light bleed with warmer, richer photonic bloom
+        vec3 bloomBleed = emitLightColor * (combinedBloom * u_bloom * 0.75);
         finalColor += bloomBleed;
+
+        // Rich tungsten warmth & saturation grade for nocturnal architectural facade
+        vec3 warmTone = vec3(1.10, 0.95, 0.74);
+        vec3 hsv = rgb2hsv(finalColor);
+        hsv.y = clamp(hsv.y * 1.30, 0.0, 1.0);
+        vec3 saturatedCol = hsv2rgb(hsv) * warmTone;
+        finalColor = mix(finalColor, saturatedCol, clamp(reveal * 0.70 + combinedBloom * 0.50, 0.0, 1.0));
 
         // Cursor glow overlay
         float cursorOverlay = 1.0 - smoothstep(organicRadius * 0.05, organicRadius, cursorRad);
@@ -607,7 +622,7 @@ export class ShaderRenderer {
       blurCanvas1.width = imgDiff.width;
       blurCanvas1.height = imgDiff.height;
       const ctx1 = blurCanvas1.getContext('2d');
-      ctx1.filter = 'blur(16px)';
+      ctx1.filter = 'blur(24px)';
       ctx1.drawImage(imgDiff, 0, 0);
       this.texDiffBlur = this._createTexture(blurCanvas1, 'texDiffBlur');
 
@@ -615,7 +630,7 @@ export class ShaderRenderer {
       blurCanvas2.width = imgDiff.width;
       blurCanvas2.height = imgDiff.height;
       const ctx2 = blurCanvas2.getContext('2d');
-      ctx2.filter = 'blur(36px)';
+      ctx2.filter = 'blur(54px)';
       ctx2.drawImage(imgDiff, 0, 0);
       this.texDiffWideBlur = this._createTexture(blurCanvas2, 'texDiffWideBlur');
 
@@ -658,15 +673,15 @@ export class ShaderRenderer {
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
 
-    // Cover fit
-    const overscan = 1.09;
+    // Cover fit with generous overscan headroom for cinematic camera drift
+    const overscan = 1.22;
     const baseScale = Math.max(w / this.imgWidth, h / this.imgHeight) * overscan;
     const dispW = this.imgWidth * baseScale;
     const dispH = this.imgHeight * baseScale;
     this.visibleX = w / dispW;
     this.visibleY = h / dispH;
-    this.maxPanX = Math.max(0.025, (1.0 - this.visibleX) * 0.5);
-    this.maxPanY = Math.max(0.025, (1.0 - this.visibleY) * 0.5);
+    this.maxPanX = Math.max(0.045, (1.0 - this.visibleX) * 0.5);
+    this.maxPanY = Math.max(0.045, (1.0 - this.visibleY) * 0.5);
 
     this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   }
@@ -769,11 +784,15 @@ export class ShaderRenderer {
     const driftX = (Math.sin(t * 0.28) * 0.55 + Math.sin(t * 0.52 + 1.4) * 0.30 + Math.sin(t * 0.12 + 2.8) * 0.15);
     const driftY = (Math.cos(t * 0.23 + 0.7) * 0.55 + Math.sin(t * 0.44 + 2.1) * 0.30 + Math.cos(t * 0.10 + 0.3) * 0.15);
 
+    // Dynamic audio reactivity for camera: beats and bass cause subtle rhythmic camera motion
+    const bassPulse = (this.smoothBassLevel || 0) * 0.35 + (this.smoothOnset || 0) * 0.20;
+
     if (this.touchMode) {
       if (!this.isDragging) {
-        const swayAmp = isAudioPlaying ? 0.35 : 0.65;
-        const driftOffsetX = driftX * this.maxPanX * swayAmp * 0.35;
-        const driftOffsetY = driftY * this.maxPanY * swayAmp * 0.35;
+        const swayAmpX = isAudioPlaying ? 0.78 : 0.90;
+        const swayAmpY = isAudioPlaying ? 0.72 : 0.85;
+        const driftOffsetX = (driftX * swayAmpX + (this.smoothStereoPan || 0) * 0.25) * this.maxPanX;
+        const driftOffsetY = (driftY * swayAmpY + bassPulse * 0.22) * this.maxPanY;
         this.targetPanX = Math.max(-this.maxPanX, Math.min(this.maxPanX, this.basePanX + driftOffsetX));
         this.targetPanY = Math.max(-this.maxPanY, Math.min(this.maxPanY, this.basePanY + driftOffsetY));
       }
@@ -782,12 +801,12 @@ export class ShaderRenderer {
       this.cameraPlayBlend += (targetPlayBlend - this.cameraPlayBlend) * Math.min(1.0, 0.04 * dt60);
       const easedPlayT = this.cameraPlayBlend * this.cameraPlayBlend * (3.0 - 2.0 * this.cameraPlayBlend);
 
-      const swayAmp = isAudioPlaying ? 0.25 : 0.55;
+      const swayAmp = isAudioPlaying ? 0.48 : 0.72;
       const tpx = (this.mouseX - 0.5) * this.maxPanX + driftX * this.maxPanX * swayAmp;
 
-      const focus = Math.max(0.2, Math.min(0.75, 0.45 + (this.smoothAudioLevel - 0.4) * 0.6));
-      const tpyPlaying = (0.5 - focus) * this.maxPanY * 0.85 + (this.mouseY - 0.5) * 0.12 * this.maxPanY;
-      const tpyIdle = (this.scrollY - 0.5) * this.maxPanY + (this.mouseY - 0.5) * 0.35 * this.maxPanY;
+      const focus = Math.max(0.18, Math.min(0.78, 0.45 + (this.smoothAudioLevel - 0.4) * 0.65));
+      const tpyPlaying = (0.5 - focus) * this.maxPanY * 0.90 + (this.mouseY - 0.5) * 0.20 * this.maxPanY + bassPulse * 0.22 * this.maxPanY;
+      const tpyIdle = (this.scrollY - 0.5) * this.maxPanY + (this.mouseY - 0.5) * 0.40 * this.maxPanY;
       const tpy = tpyIdle + (tpyPlaying - tpyIdle) * easedPlayT + driftY * this.maxPanY * swayAmp;
 
       this.targetPanX = Math.max(-this.maxPanX, Math.min(this.maxPanX, tpx));
@@ -795,7 +814,7 @@ export class ShaderRenderer {
     }
 
     // Camera pan easing
-    const panEase = Math.min(1.0, 0.08 * dt60);
+    const panEase = Math.min(1.0, 0.065 * dt60);
     this.panX += (this.targetPanX - this.panX) * panEase;
     this.panY += (this.targetPanY - this.panY) * panEase;
 
@@ -844,7 +863,9 @@ export class ShaderRenderer {
     gl.uniform2f(this.uniforms.viewScale, this.visibleX, this.visibleY);
     gl.uniform2f(this.uniforms.viewPan, this.panX, this.panY);
     gl.uniform2f(this.uniforms.mouse, this.mouseUVX, this.mouseUVY);
-    gl.uniform1f(this.uniforms.cursorRadius, 0.14 * clickScale);
+    const isMobile = this.touchMode || (this.canvas.width / (this.canvas.height || 1) < 0.85);
+    const baseRadius = isMobile ? 0.22 : 0.15;
+    gl.uniform1f(this.uniforms.cursorRadius, baseRadius * clickScale);
     gl.uniform1f(this.uniforms.idleBlend, easedIdle);
     gl.uniform1f(this.uniforms.cursorStrength, easedCursorStrength);
 

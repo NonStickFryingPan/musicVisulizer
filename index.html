@@ -10,13 +10,18 @@
 <body>
 
   <!-- Fullscreen WebGL Stage -->
-  <main class="stage">
+  <main class="stage" id="main-stage">
     <canvas id="canvas-main"></canvas>
   </main>
 
-  <!-- Minimal Barebones Preloader -->
-  <div class="preloader-minimal" id="preloader">
-    <div class="loader-content">
+  <!-- Preloader: Photonic Impacts on Desktop, Minimal Bar on Mobile -->
+  <div class="preloader" id="preloader">
+    <!-- Desktop: Photonic Impacts Canvas & Large Difference Numeral -->
+    <canvas id="preloader-canvas" class="preloader-canvas"></canvas>
+    <div class="veil-pct" id="desktop-percent">0<span class="veil-pct-symbol">%</span></div>
+
+    <!-- Mobile: Original div loader-content -->
+    <div class="loader-content" id="mobile-loader-content">
       <div class="loader-brand">LOADING</div>
       <div class="loader-track">
         <div class="loader-bar" id="loader-bar"></div>
@@ -42,6 +47,56 @@
       <span>Upload a song</span>
     </button>
     <div class="upload-hint">or drop audio anywhere</div>
+  </div>
+
+  <!-- Floating Pill Mobile Bottom Dock -->
+  <div class="glass mobile-dock hidden" id="mobile-dock" role="region" aria-label="Playback Controls">
+    <!-- 1. Play / Pause Button -->
+    <button class="dock-btn dock-play-btn" id="dock-btn-play" aria-label="Play / Pause">
+      <svg class="dock-play-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <polygon points="7 4 19 12 7 20"></polygon>
+      </svg>
+    </button>
+
+    <!-- 2. Back Button (1x restart, 2x within 2s previous) -->
+    <button class="dock-btn dock-icon-btn" id="dock-btn-back" aria-label="Restart song or double-tap for previous">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="19 20 9 12 19 4 19 20"></polygon>
+        <line x1="5" y1="19" x2="5" y2="5"></line>
+      </svg>
+    </button>
+
+    <!-- 3. Progress Bar & Elapsed / Total Duration -->
+    <div class="dock-progress-wrap">
+      <div class="dock-scrubber" id="dock-scrubber" aria-label="Seek track" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="dock-track-rail">
+          <div class="dock-track-fill" id="dock-track-fill">
+            <div class="dock-track-thumb"></div>
+          </div>
+        </div>
+      </div>
+      <div class="dock-times">
+        <span class="dock-time-elapsed" id="dock-time-elapsed">0:00</span>
+        <span class="dock-time-total" id="dock-time-total">0:00</span>
+      </div>
+    </div>
+
+    <!-- 4. Next Button -->
+    <button class="dock-btn dock-icon-btn" id="dock-btn-next" aria-label="Next song">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 4 15 12 5 20 5 4"></polygon>
+        <line x1="19" y1="5" x2="19" y2="19"></line>
+      </svg>
+    </button>
+
+    <!-- 5. Upload Button -->
+    <button class="dock-btn dock-icon-btn" id="dock-btn-upload" aria-label="Upload a song">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="17 8 12 3 7 8"></polyline>
+        <line x1="12" y1="3" x2="12" y2="15"></line>
+      </svg>
+    </button>
   </div>
 
   <div id="toast" class="glass toast hidden" role="status" aria-live="polite"></div>
