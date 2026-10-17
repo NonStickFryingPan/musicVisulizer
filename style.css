@@ -2,6 +2,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html, body {
@@ -428,6 +429,13 @@ html, body {
 
 .dock-btn:active {
   transform: scale(0.88);
+}
+
+/* Keep keyboard focus legible without the touch tap ring */
+.dock-btn:focus-visible,
+.action-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline-offset: 2px;
 }
 
 .dock-play-btn {

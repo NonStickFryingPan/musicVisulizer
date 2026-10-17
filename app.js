@@ -9,11 +9,18 @@ window.addEventListener('DOMContentLoaded', () => {
   window.audioEngine = audioEngine;
   window.renderer = renderer;
 
-  // Eager background preload during preloader for zero-latency instant playback
+  // Preload telemetry: first song (blocking) + facade textures drive honest progress.
+  // song2 keeps downloading in the background and never gates the reveal.
+  let firstSongProgress = 0;
+  let firstSongReady = false;
   const audioPreloadPromise = audioEngine.preloadDefaultTracks([
     { url: 'song.mp3', name: 'SINES Theme 1' },
     { url: 'song2.mp3', name: 'SINES Theme 2' }
-  ]);
+  ], (p) => { firstSongProgress = p; });
+  audioPreloadPromise.then(() => { firstSongReady = true; });
+
+  let imageProgress = 0;
+  renderer.onProgress((p) => { imageProgress = Math.max(imageProgress, p); });
 
   const btnPlayDefault = document.getElementById('btn-play-default');
   const btnUpload = document.getElementById('btn-upload');
@@ -173,6 +180,8 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  const REVEAL_BUDGET_MS = 45000;
+
   function updateLoader(now) {
     if (preloaderFinished) return;
 
@@ -180,7 +189,13 @@ window.addEventListener('DOMContentLoaded', () => {
     lastLoaderTime = now;
     const isMobile = isMobileDevice();
 
-    if (renderer.isLoaded) {
+    const elapsedSec = (now - loadStartTime) / 1000;
+    const timedOut = elapsedSec * 1000 > REVEAL_BUDGET_MS;
+    // Reveal once the first song and the facade textures are both ready;
+    // the safety budget prevents a stalled asset from trapping the visitor.
+    const stageReady = (renderer.isLoaded && firstSongReady) || timedOut;
+
+    if (stageReady) {
       // Unhurried completion: smooth glide to 100%
       const dtRate = isMobile ? 0.20 : Math.min(1.0, 3.2 * dt);
       currentPct += (100.0 - currentPct) * dtRate;
@@ -228,15 +243,13 @@ window.addEventListener('DOMContentLoaded', () => {
         return;
       }
     } else {
-      // 5% per second until 80%, then gradual drift towards 98%
-      const elapsedSec = (now - loadStartTime) / 1000;
-      let targetPct;
-      if (elapsedSec <= 16.0) {
-        targetPct = elapsedSec * 5.0;
-      } else {
-        const extraSec = elapsedSec - 16.0;
-        targetPct = Math.min(98.0, 80.0 + extraSec * 0.75);
-      }
+      // Honest progress: facade textures (50%) blended with the first song (50%),
+      // then floored by an early crawl so the numeral never reads as frozen.
+      const audNorm = firstSongReady ? 1 : firstSongProgress;
+      const imgNorm = Math.max(0, Math.min(1, (imageProgress - 0.12) / 0.88));
+      let targetPct = Math.min(98.0, (imgNorm * 0.5 + audNorm * 0.5) * 100.0);
+      targetPct = Math.max(targetPct, Math.min(98.0, elapsedSec * 4.0));
+      targetPct = Math.max(targetPct, Math.min(98.0, currentPct));
       currentPct += (targetPct - currentPct) * Math.min(1.0, 6.0 * dt);
     }
 

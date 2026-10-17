@@ -200,10 +200,40 @@ export class AudioEngine {
     }
   }
 
+  // Streamed fetch that reports byte progress when the server supplies a length.
+  async _fetchAudio(url, onProgress) {
+    const res = await fetch(url, {
+      headers: { 'Accept': 'audio/*, application/octet-stream' }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    if (!res.body || typeof onProgress !== 'function' || !total) {
+      return res.arrayBuffer();
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(Math.min(1, received / total));
+    }
+    const merged = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    onProgress(1);
+    return merged.buffer;
+  }
+
   async preloadDefaultTracks(tracks = [
     { url: 'song.mp3', name: 'SINES Theme 1' },
     { url: 'song2.mp3', name: 'SINES Theme 2' }
-  ]) {
+  ], onProgress) {
     try {
       this.ensureContext();
       const items = tracks.map(t => ({
@@ -220,44 +250,34 @@ export class AudioEngine {
       this.currentTrack = items[0];
       this._notifyPlaylistChange();
 
-      // Preload first track immediately for zero startup latency
+      // Preload first track immediately (blocking) for zero startup latency
       const streamUrl = tracks[0].url.includes('?') ? tracks[0].url : `${tracks[0].url}?stream=1`;
-      const res1 = await fetch(streamUrl, {
-        headers: { 'Accept': 'audio/*, application/octet-stream' }
-      });
-      if (res1.ok) {
-        const ab1 = await res1.arrayBuffer();
-        items[0].arrayBuffer = ab1;
-        try {
-          const decoded1 = await this.audioCtx.decodeAudioData(ab1.slice(0));
-          items[0].buffer = decoded1;
-          items[0].duration = decoded1.duration;
-          this.audioBuffer = decoded1;
-          this._notifyStateChange();
-          this._notifyPlaylistChange();
-        } catch (decErr) {
-          console.warn('Pre-decode notice for track 0:', decErr.message);
-        }
+      const ab1 = await this._fetchAudio(streamUrl, onProgress);
+      items[0].arrayBuffer = ab1;
+      try {
+        const decoded1 = await this.audioCtx.decodeAudioData(ab1.slice(0));
+        items[0].buffer = decoded1;
+        items[0].duration = decoded1.duration;
+        this.audioBuffer = decoded1;
+        this._notifyStateChange();
+        this._notifyPlaylistChange();
+      } catch (decErr) {
+        console.warn('Pre-decode notice for track 0:', decErr.message);
       }
 
-      // Preload subsequent tracks in the background
+      // Preload subsequent tracks in the background (never blocks reveal)
       (async () => {
         for (let i = 1; i < items.length; i++) {
           try {
             const u = items[i].url.includes('?') ? items[i].url : `${items[i].url}?stream=1`;
-            const res = await fetch(u, {
-              headers: { 'Accept': 'audio/*, application/octet-stream' }
-            });
-            if (res.ok) {
-              const ab = await res.arrayBuffer();
-              items[i].arrayBuffer = ab;
-              try {
-                const dec = await this.audioCtx.decodeAudioData(ab.slice(0));
-                items[i].buffer = dec;
-                items[i].duration = dec.duration;
-              } catch (decErr) {
-                console.warn(`Pre-decode notice for track ${i}:`, decErr.message);
-              }
+            const ab = await this._fetchAudio(u);
+            items[i].arrayBuffer = ab;
+            try {
+              const dec = await this.audioCtx.decodeAudioData(ab.slice(0));
+              items[i].buffer = dec;
+              items[i].duration = dec.duration;
+            } catch (decErr) {
+              console.warn(`Pre-decode notice for track ${i}:`, decErr.message);
             }
           } catch (e) {
             console.warn(`Background preload for track ${i} notice:`, e);
@@ -265,6 +285,7 @@ export class AudioEngine {
         }
       })();
 
+      this._notifyPlaylistChange();
       return items[0];
     } catch (err) {
       console.warn('Preload default tracks notice:', err);
