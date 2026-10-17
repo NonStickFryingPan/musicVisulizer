@@ -394,6 +394,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (btnPlayDefault) {
     btnPlayDefault.addEventListener('click', async () => {
+      btnPlayDefault.classList.add('pending');
       try {
         await audioEngine.resumeContext();
         if (!audioEngine.audioBuffer) {
@@ -408,6 +409,8 @@ window.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         console.error('Play default track error:', err);
         showToast('Could not play track. Please upload an audio file.');
+      } finally {
+        btnPlayDefault.classList.remove('pending');
       }
     });
   }
@@ -428,14 +431,17 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadUI.classList.remove('hidden');
+    uploadUI.classList.add('dragover');
   });
   window.addEventListener('dragleave', (e) => {
     if (e.relatedTarget === null) {
+      uploadUI.classList.remove('dragover');
       updateChrome();
     }
   });
   window.addEventListener('drop', (e) => {
     e.preventDefault();
+    uploadUI.classList.remove('dragover');
     handleFiles(e.dataTransfer && e.dataTransfer.files);
     updateChrome();
   });
@@ -470,6 +476,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Floating Pill mobile dock bindings
   if (dockBtnPlay) {
     dockBtnPlay.addEventListener('click', async () => {
+      dockBtnPlay.classList.add('pending');
       try {
         await audioEngine.resumeContext();
         if (audioEngine.isPlaying) {
@@ -489,6 +496,8 @@ window.addEventListener('DOMContentLoaded', () => {
         }
       } catch (err) {
         console.error('Dock play error:', err);
+      } finally {
+        dockBtnPlay.classList.remove('pending');
       }
     });
   }
